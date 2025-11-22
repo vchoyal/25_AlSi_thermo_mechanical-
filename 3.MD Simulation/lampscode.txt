@@ -1,0 +1,78 @@
+# ====================================================================
+# LAMMPS Input Script for Al-Si Tensile Deformation
+# Project: Thermo-mechanical Properties of Al-Si Alloy
+# ====================================================================
+
+# 1. INITIALIZATION
+units           metal
+dimension       3
+boundary        p p p
+atom_style      atomic
+
+# Variables for loops (These are overwritten by command line for batch runs)
+variable        temp index 300      # Temperature in Kelvin
+variable        seed index 12345    # Random seed
+
+# 2. ATOM DEFINITION
+# Create FCC lattice for Aluminum (approx 4.05 Angstroms)
+lattice         fcc 4.05
+region          sim_box block 0 20 0 20 0 20
+create_box      2 sim_box
+
+# Create atoms (Type 1 = Al, Type 2 = Si)
+create_atoms    1 region sim_box
+
+# Randomly replace 10% of Al with Si (creating Al-Si alloy)
+set             type 1 type/fraction 2 0.1 87934
+
+mass            1 26.9815  # Al
+mass            2 28.0855  # Si
+
+# 3. FORCE FIELDS
+# Use EAM alloy potential (Standard for Al-Si)
+pair_style      eam/alloy
+pair_coeff      * * AlSi.eam.alloy Al Si
+
+# 4. SETTINGS
+compute         peratom all pe/atom
+reset_timestep  0
+
+# 5. MINIMIZATION (Relax structure)
+minimize        1.0e-4 1.0e-6 1000 10000
+
+# 6. EQUILIBRATION (Heat to target Temp)
+reset_timestep  0
+timestep        0.001 # 1 femtosecond
+
+velocity        all create ${temp} ${seed} dist gaussian
+fix             1 all npt temp ${temp} ${temp} 100.0 iso 0.0 0.0 1000.0
+
+# Run equilibration for 20 picoseconds
+run             20000
+unfix           1
+
+# 7. DEFORMATION (Tensile Test)
+# Reset simulation for deformation phase
+fix             2 all nvt temp ${temp} ${temp} 100.0
+fix             3 all deform 1 x erate 0.001 units box remap x
+
+# 8. OUTPUT CALCULATION
+# Calculate Stress (Pxx is pressure in x, negative Pxx is tensile stress)
+# Convert bars to GPa (10000 bars = 1 GPa)
+variable        strain equal "(lx - v_L0)/v_L0"
+variable        stress equal "-pxx/10000"
+variable        p1 equal "v_strain"
+variable        p2 equal "v_stress"
+variable        p3 equal "temp"
+
+# Capture initial length L0
+variable        L0 equal lx
+
+# 9. DATA RECORDING (The "Raw" Data)
+# This saves raw simulation data to a file
+fix             data_print all print 100 "${p3},${p1},${p2}" file raw_simulation_log_T${temp}.csv screen no title "Temp,Strain,Stress_GPa"
+
+# Run deformation for 15% strain
+run             150000
+
+print           "Simulation Complete for T=${temp}"
